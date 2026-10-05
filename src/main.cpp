@@ -1,4 +1,8 @@
 #include <bits/stdc++.h>
+#include "graph.h"
+#include "solver.h"
+#include "hpc_check.h"
+
 using namespace std;
 
 int n, m;
@@ -25,19 +29,26 @@ int main(int argc, char** argv) {
 
     fin >> n >> m;
     u.resize(m); v.resize(m); R.resize(m); F.resize(m);
+    
+    // Create the OOP graph infrastructure
+    VentilationGraph network(n);
+    for (int i = 0; i < n; i++) {
+        network.addJunction(i, "Junction_" + to_string(i));
+    }
+
     for (int i = 0; i < m; i++) {
         fin >> u[i] >> v[i] >> R[i] >> F[i];
         if (u[i] < 0 || u[i] >= n || v[i] < 0 || v[i] >= n || R[i] <= 0) {
             cout << "bad airway " << i << "\n";
             return 1;
         }
+        // Synergize: Populate the graph with initial flows (e.g., 10.0 m3/s baseline)
+        network.addAirway(i, u[i], v[i], R[i], 10.0);
     }
 
-    cout << n << " nodes, " << m << " airways\n";
-    for (int i = 0; i < m; i++)
-        cout << i << ": " << u[i] << " -> " << v[i] << "  R=" << R[i] << "  fan=" << F[i] << "\n";
+    cout << n << " nodes, " << m << " airways loaded.\n";
 
-    // spanning tree with union-find
+    // Spanning tree extraction via Union-Find Disjoint Sets
     par.resize(n);
     for (int i = 0; i < n; i++) par[i] = i;
 
@@ -58,19 +69,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    cout << "tree airways:";
-    for (int i = 0; i < m; i++)
-        if (inTree[i]) cout << " " << i;
-    cout << "\n";
-
-    cout << "non-tree airways (one loop each):";
-    for (int i = 0; i < m; i++)
-        if (!inTree[i]) cout << " " << i;
-    cout << "\n";
-
-    cout << "number of loops = m - n + 1 = " << m - n + 1 << "\n";
-
-    // tree adjacency: adj[node] = list of (neighbor, airway index)
+    // Build the fundamental tree adjacency list for BFS loop detection
     vector<vector<pair<int,int>>> adj(n);
     for (int i = 0; i < m; i++) {
         if (inTree[i]) {
@@ -79,7 +78,6 @@ int main(int argc, char** argv) {
         }
     }
 
-    // BFS from node 0 to get parent, parent airway, depth
     vector<int> parent(n, -1), parentEdge(n, -1), depth(n, 0);
     vector<bool> seen(n, false);
     queue<int> q;
@@ -100,19 +98,19 @@ int main(int argc, char** argv) {
         }
     }
 
-    // build one loop per non-tree airway
-    vector<vector<pair<int,int>>> loops;   // each item: (airway, +1 or -1)
+    // Extract loop paths (+1 same direction, -1 opposing direction)
+    vector<vector<pair<int,int>>> fundamental_loops;
     for (int e = 0; e < m; e++) {
         if (inTree[e]) continue;
         vector<pair<int,int>> loop, down;
-        loop.push_back({e, +1});           // travel e from u[e] to v[e]
+        loop.push_back({e, +1});
         int x = v[e], y = u[e];
         while (x != y) {
-            if (depth[x] >= depth[y]) {    // climb from x toward the root
+            if (depth[x] >= depth[y]) {
                 int pe = parentEdge[x];
                 loop.push_back({pe, (u[pe] == x) ? +1 : -1});
                 x = parent[x];
-            } else {                       // climb from y; walked downward later
+            } else {
                 int pe = parentEdge[y];
                 down.push_back({pe, (u[pe] == parent[y]) ? +1 : -1});
                 y = parent[y];
@@ -120,14 +118,17 @@ int main(int argc, char** argv) {
         }
         reverse(down.begin(), down.end());
         for (auto p : down) loop.push_back(p);
-        loops.push_back(loop);
+        fundamental_loops.push_back(loop);
     }
 
-    for (int k = 0; k < (int)loops.size(); k++) {
-        cout << "loop " << k << ":";
-        for (auto p : loops[k])
-            cout << " " << p.first << (p.second == 1 ? "(+)" : "(-)");
-        cout << "\n";
-    }
+    // 1. Run Hardy Cross Engine 
+    cout << "\n=== Launching Numerical Solver Pipeline ===\n";
+    VentilationSolver::computePressuresAndImbalances(network);
+
+    // 2. Trigger Multi-threaded HPC reduction validation check
+    cout << "\n=== Running Parallel HPC Diagnostics ===\n";
+    int threads_to_use = 4;
+    HPCCheck::verifyContinuityParallel(network, threads_to_use);
+
     return 0;
 }
